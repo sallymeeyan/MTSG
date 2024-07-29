@@ -5,20 +5,6 @@ This code is the implemention of MSG methods published as following:
 Y. Ji, Q. Wei, R. Chen, Q. Wang, R. Tao, B. Li, Integration of multidimensional splicing data and GWAS summary statistics for risk gene discovery. PLoS Genet. 18, e1009814 (2022).
 
 
-# Hassle-free way to run the code: singularity
-
-singularity > 3.8
-
-```{bash}
-conda create -p /path_to_env/msg
-
-conda activate /path_to_env/msg
-
-conda install -c conda-forge singularity
-
-```
-
-
 ## step to run it
 
 1. Download the data.tar from the [link](https://www.dropbox.com/scl/fo/vly3z0mxawa5x0v9k4elh/ADUtksnvW0Iyo71twsQDNGc?rlkey=vi69osfby7ipnjru9wva1tte3&dl=0):
