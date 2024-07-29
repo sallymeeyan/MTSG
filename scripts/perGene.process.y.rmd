@@ -1,0 +1,225 @@
+---
+title: "process y matrix"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r}
+suppressMessages(library("myutils"))
+suppressMessages(using("knitr"))
+opts_chunk$set(tidy.opts=list(width.cutoff=75),tidy=TRUE)
+
+```
+
+How to set a new option for R chunk
+
+```{r setup, echo = FALSE, eval = !opt$asRmdPart}
+str_break = function(x, width = 80L) {
+    for(i in 1:length(x)){
+        n = nchar(x[i])
+        if (n > width){ 
+            n1 = seq(1L, n, by = width)
+            n2 = seq(width, n, by = width)
+            if (n %% width != 0) n2 = c(n2, n)
+            tmp <- substring(x[i], n1, n2)
+            x[i] <- paste(tmp,collapse="\n")
+        }
+    }
+    x
+}
+
+hook_source = knit_hooks$get('source')
+knit_hooks$set(source = function(x, options) {
+    ## this hook is used only when the linewidth option is not NULL
+    if (!is.null(n <- options$linewidth)) {
+	x = knitr:::split_lines(x)
+        ## any lines wider than n should be wrapped
+        if (any(nchar(x) > n)) x = str_break(x, width = n)
+        x = paste(x, collapse = '\n')
+    }
+    hook_source(x, options)
+})
+```
+
+
+
+```{r, label = "getopt",eval = FALSE}
+suppressMessages(require(ggplot2))
+suppressMessages(require(dplyr))
+suppressMessages(require(magrittr))
+suppressMessages(require(reshape2))
+suppressMessages(require(data.table))
+suppressMessages(require(ggforce))
+suppressMessages(require(gtools))
+suppressMessages(require(RColorBrewer))
+suppressMessages(require(gtools))
+suppressMessages(library(ggpubr))
+suppressMessages(library(ggforce))
+suppressMessages(library(gtable))
+suppressMessages(library(grid))
+suppressMessages(library(gridExtra))
+suppressMessages(library(extrafont))
+loadfonts()
+
+library("myutils")
+using("optparse")
+
+option <- myoption()
+option_list <- c(option$table,
+                 option$plot,
+                 option$general
+                 )
+
+opt <- parse_args(OptionParser(option_list=c(option_list)))
+
+```
+
+## Select a single gene and pool all splicing events from all selected tissues
+## convert R opts to Bash opts
+conver all R opts to bash opts with Upper case name
+
+```{r, label = "", linewidth = 85, eval=opt$eval}
+
+if(is.null(opt$dir_data)){
+    stop("specify --dir_data")
+}
+
+for(i in 1:length(opt)){
+    .Internal(Sys.setenv(toupper(names(opt[i])),as.character(opt[[i]])))
+}
+
+```
+
+## Extract single splicing event and create one file for each
+
+```{bash, label = "single_splicing_matrix", linewidth = 85, eval=opt$eval}
+## extract splicings of one gene in each of the tissues and format the matrix of tissue*individuals
+cd $DIR_WORKING
+
+[[ -f $DIR_OUT/$GENE.splicing ]] ||	parallel -j $THREADS --line-buffer -k -q bash -c 'grep {2} {3}/gene.500k.id | perl -slane '\''print "tabix $x chr$F[1]:$F[4]-$F[5] -h"'\'' -- -x={1}  | bash | perl -F"\t" -slane '\''if($.==1 || /$gene/){print $tissue,"\t".join "\t",@F}'\'' -- -tissue={=1 s#.*/##g;s#.v\d+.*##g=} -gene={2}'  ::: $DIR_DATA/all_splicing_filled_expand/*.gz :::  $GENE ::: $DIR_DATA   > $DIR_OUT/$GENE.splicing 
+
+```
+
+## Early stop checking
+
+```{r, label = "earlyStop1", linewidth = 85, eval = opt$eval}
+gmatrix <- paste0(opt$gene,".splicing")
+sps <- fread(paste(opt$dir_out, gmatrix, sep = "/"))
+
+if(nrow(sps) <= 32){
+    unlink(paste0(opt$dir_out,"/",opt$gene,".splicing"))
+    print("no enough number of splicing events. ")
+    knitr::knit_exit()
+}
+```
+
+## only Keeps the samples filtered
+
+```{bash, label = "", linewidth = 85, eval=opt$eval}
+cd $DIR_WORKING
+head -n1 $DIR_OUT/$GENE.splicing | perl -F"\t" -lane 'map {print $_+1,"\t",$F[$_]} 0..$#F' | $DIR_SCRIPT/comp2line.hash.pl -db -  -d 2 -c 1 -q $DIR_DATA/samples.filtered.used -e | grep -v nocomm | cut -f 2 | perl -lane 'push @out,$F[0];END{print join ",",@out}' | xargs -I{} cut -f 1-5,{} $DIR_OUT/$GENE.splicing > $DIR_OUT/$GENE.filtered.splicing
+## rm -f $DIR_OUT/$GENE.splicing
+```
+
+```{bash, label = "single_splicing_matrix_2", linewidth = 85, eval=opt$eval}
+cd $DIR_WORKING
+mkdir $DIR_OUT/spl_$GENE
+
+## split all splicing events into single files, one for each splicing event
+cat $DIR_OUT/$GENE.filtered.splicing | perl -F"\t" -slane 'if($.==1){$header=$_;next}if(/#/){next}push @{$hash{$F[4]}},join "\t",@F;END{foreach my $key(keys %hash){open(my $fh,">$dir_spl/splice_${key}.split");print $fh $header,"\n".join "\n",@{$hash{$key}}}}' -- -dir_spl=$DIR_OUT/spl_$GENE
+
+## rm -f $DIR_OUT/$GENE.filtered.splicing
+```
+
+## Imputation for each single splicing matrix- output all finial matrix for SDA
+
+```{bash, label = "imp", linewidth = 85, eval=opt$eval}
+cd $DIR_WORKING
+## ouput one imputed matrix for all splicings events
+[[ -f $DIR_OUT/$GENE.all.final.matrix ]] || Rscript $DIR_SCRIPT/impute_missing_0120.R --input $DIR_OUT/spl_$GENE/ --dir_out $DIR_OUT --gid $GENE --impute_mode TRUE --threads 5
+
+## rm -rf $DIR_OUT/spl_$GENE/
+```
+
+## Early stop checking
+
+```{r, label = "earlyStop2", linewidth = 85, eval = opt$eval}
+print(paste0(opt$dir_out, "/",opt$gene,".all.final.matrix"))
+all.m <- fread(paste0(opt$dir_out, "/",opt$gene,".all.final.matrix"))
+
+if(ncol(all.m) < 4){
+   print("no enough number of splicing events. ")
+    unlink(paste0(opt$dir_out, "/",opt$gene,".all.final.matrix"))
+    unlink(paste0(opt$dir_out, "/",opt$gene,".all.final.matrix.wt.names"))
+    knitr::knit_exit()
+}
+```
+
+
+## SDA
+
+```{bash, label = "", linewidth = 85, eval=opt$eval}
+cd $DIR_WORKING
+mkdir $DIR_OUT/sda_$GENE
+
+if [[ ! $TISSUE ]];then
+	cat $DIR_OUT/$GENE.all.final.matrix | sed '1d' | perl -lane 'print join "\t",@F[2..$#F]'  > $DIR_OUT/$GENE.all.final.matrix.input
+else
+	cat $DIR_OUT/$GENE.all.final.matrix | sed '1d' | grep -i -P "$TISSUE" |perl -lane 'print join "\t",@F[2..$#F]'  > $DIR_OUT/$GENE.all.final.matrix.input
+fi
+
+num_splicing=$(head -n1 $DIR_OUT/$GENE.all.final.matrix.input | perl -lane '$arrSize = @F; print $arrSize;')
+sample_size=$(wc -l $DIR_DATA/samples.filtered.used | perl -lane 'print $F[0]')
+
+
+[[ -f $DIR_OUT/sda_$GENE/it2000/A ]] || $DIR_SCRIPT/sda_static_linux --debug false --data $DIR_OUT/$GENE.all.final.matrix.input --N $sample_size --out $DIR_OUT/sda_$GENE --num_comps $num_splicing --ignore_missing false --impute_missing false
+
+## the decomposed final matrix
+[[ -f $DIR_OUT/$GENE.all.final.matrix.decomp ]] || sed 's/ /\t/g' $DIR_OUT/sda_$GENE/it2000/A | $DIR_SCRIPT/matrixT.pl | perl -F"\t" -MList::Util=sum -lane 'if(sum(@F)==0){next}print "splice".($.-1)."\t",join "\t",@F' | cat <(cat $DIR_OUT/$GENE.all.final.matrix | sed '1d' | head -n $sample_size | perl -lane 'print $F[1]' | sed '1i\Expression' | perl -lane 'push @out,$F[0];END{print join "\t",@out}') -  >  $DIR_OUT/$GENE.all.final.matrix.decomp
+
+##rm -f $DIR_OUT/$GENE.all.final.matrix
+## rm -f $DIR_OUT/$GENE.all.final.matrix.input
+## rm -rf $DIR_OUT/sda_$GENE
+```
+
+## Early stop checking y matrix
+
+```{r, label = "", linewidth = 85, eval = opt$eval}
+
+all.m <- fread(paste0(opt$dir_out,"/",opt$gene,".all.final.matrix.decomp"))
+
+## rows of y matrix should be greater than 2
+if(nrow(all.m) < 2){ print("no enough number of splicing events. ")
+    unlink(paste0(opt$dir_out, "/",opt$gene,".all.final.matrix.decomp"))
+    knitr::knit_exit()
+}
+```
+
+
+```{bash, label = "runRMD", linewidth = 85, eval=F}
+
+parallel -j 1 --ungroup -q echo '/home/yany14/Yan_Yan/opt/condaEnv/AccreLibEnv/bin/Rscript /nobackup/cgg/yany14/MSG/runRmd.R --rmd /home/yany14/Rscripts/rmd/cca_multiple/perGene.process.y.noImpute.rmd  --gene {} --dir_data /nobackup/cgg/yany14/MSG/data/ --dir_out /nobackup/cgg/yany14/MSG/dir_ymatrix_noimpute_1219/ --output {}  --eval TRUE' ::: $(cut -f 1 /nobackup/cgg/yany14/MSG/data_dir/Homo_sapiens.GRCh38.101.gtf.tab.pro.eg | sort | uniq) > generate.y.noImpute.cmd
+cat generate.y.noImpute.cmd | ssub --time_hour 2 -pmem 6000 -nodes 1 -ntasks 1 --cpus_per_task 6 -e -sub
+
+ls dir_ymatrix_noimpute_1219/ | grep html | sed 's/.html//' | grep -v -f - generate.y.cmd | sed 's#Rscript#/home/yany14/Yan_Yan/opt/condaEnv/AccreLibEnv/bin/Rscript#' > generate.y.noImpute.fail.cmd
+
+
+cat generate.y.noImpute.fail.cmd | ssub --time_hour 2 -pmem 6000 -nodes 1 -ntasks 1 --cpus_per_task 6 -e -sub
+
+
+## make sure all intermediate files are removed
+ls dir_ymatrix_noimpute_1219/ | grep -v -P "decomp|html"
+
+## how many html files are generated
+ls dir_ymatrix_noimpute_1219/ | grep "html" |wc -l
+wc -l generate.y.cmd
+## The number is the same to cmd numbers been run.
+
+
+## Number of genes with Y matrix, only 11058 in total
+ls dir_ymatrix_noimpute_1219/ | grep decomp | wc -l 
+```
+
+

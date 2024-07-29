@@ -1,0 +1,164 @@
+---
+title: "process x matrix"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+---
+
+
+
+```{r}
+suppressMessages(library("myutils"))
+suppressMessages(using("knitr"))
+opts_chunk$set(tidy.opts=list(width.cutoff=75),tidy=TRUE)
+
+```
+
+How to set a new option for R chunk
+
+```{r setup, echo = FALSE, eval = !opt$asRmdPart}
+str_break = function(x, width = 80L) {
+    for(i in 1:length(x)){
+        n = nchar(x[i])
+        if (n > width){ 
+            n1 = seq(1L, n, by = width)
+            n2 = seq(width, n, by = width)
+            if (n %% width != 0) n2 = c(n2, n)
+            tmp <- substring(x[i], n1, n2)
+            x[i] <- paste(tmp,collapse="\n")
+        }
+    }
+    x
+}
+
+hook_source = knit_hooks$get('source')
+knit_hooks$set(source = function(x, options) {
+    ## this hook is used only when the linewidth option is not NULL
+    if (!is.null(n <- options$linewidth)) {
+	x = knitr:::split_lines(x)
+        ## any lines wider than n should be wrapped
+        if (any(nchar(x) > n)) x = str_break(x, width = n)
+        x = paste(x, collapse = '\n')
+    }
+    hook_source(x, options)
+})
+```
+
+
+
+```{r, label = "getopt",eval = FALSE}
+suppressMessages(require(ggplot2))
+suppressMessages(require(dplyr))
+suppressMessages(require(magrittr))
+suppressMessages(require(reshape2))
+suppressMessages(require(data.table))
+suppressMessages(require(ggforce))
+suppressMessages(require(gtools))
+suppressMessages(require(RColorBrewer))
+suppressMessages(require(gtools))
+suppressMessages(library(ggpubr))
+suppressMessages(library(ggforce))
+suppressMessages(library(gtable))
+suppressMessages(library(grid))
+suppressMessages(library(gridExtra))
+suppressMessages(library(extrafont))
+loadfonts()
+
+library("myutils")
+using("optparse")
+
+option <- myoption()
+option_list <- c(option$table,
+                 option$plot,
+                 option$general
+                 )
+
+opt <- parse_args(OptionParser(option_list=c(option_list)))
+
+```
+## Select a single gene and pool all splicing events from all selected tissues
+
+```{r, label = "", linewidth = 85, eval=opt$eval}
+Sys.setenv("GENE"=opt$gene)
+Sys.setenv("DIR_DATA"=opt$dir_data)
+Sys.setenv("DIR_SCRIPT"=opt$dir_script)
+Sys.setenv("DIR_WORKING"=opt$dir_working)
+Sys.setenv("DIR_OUT"=opt$dir_out)
+Sys.setenv("SUMSTATS"=opt$sumstats)
+
+
+```
+
+
+## Genotype - matrix X
+
+```{bash, label = "", linewidth = 85, eval=opt$eval}
+cd $DIR_WORKING
+export PATH=$PATH:/home/chenr6/myscript/script/:/home/chenr6/myscript/SHscript/
+
+
+## 1. Search gene centered 500k region
+## 2. Add chr to chromsome col
+## 3. extract genotypes for that gene region 
+## 4. add header of vcf
+[[ -f  $DIR_OUT/$GENE.select.rsid.vcf.ac.x_all ]]  || [[ -f $DIR_OUT/$GENE.vcf ]] || grep $GENE $DIR_DATA/gene.500k.id | perl -F"\t" -lane '$F[1]="chr$F[1]";print join "\t",@F' | $DIR_SCRIPT/extabix.pl -chr 2 -start 3 -end 4  -query - -db $DIR_DATA/GTEx_Analysis_2017-06-05_v8_WholeGenomeSeq_838Indiv_Analysis_Freeze.SHAPEIT2_phased.vcf.gz -e | cut -f 10- | cat <(zless  $DIR_DATA/GTEx_Analysis_2017-06-05_v8_WholeGenomeSeq_838Indiv_Analysis_Freeze.SHAPEIT2_phased.vcf.gz | head -n 5000 | grep -iP "^#chr" | head -n1) - > $DIR_OUT/$GENE.vcf
+
+
+## 1. select samples from vcf - need ID of samples used  
+[[ -f  $DIR_OUT/$GENE.select.rsid.vcf.ac.x_all ]]  || [[ -f $DIR_OUT/$GENE.select.vcf ]] || cat $DIR_OUT/$GENE.vcf | $DIR_SCRIPT/matrixT.pl | $DIR_SCRIPT/comp2line.hash.pl -db - -d 1 -c 1 -q <(cat <(zless  $DIR_DATA/GTEx_Analysis_2017-06-05_v8_WholeGenomeSeq_838Indiv_Analysis_Freeze.SHAPEIT2_phased.vcf.gz | head -n 5000 | grep -iP "^#chr" | head -n1 | $DIR_SCRIPT/fheader | cut -f 2 | head -n9) $DIR_DATA/samples.filtered.used) -e | cut -f 2- | $DIR_SCRIPT/matrixT.pl > $DIR_OUT/$GENE.select.vcf
+
+## validate calculation of allele count from genotypes
+## [[ -f  $DIR_OUT/$GENE.select.rsid.vcf.ac.x_all ]]  || [[ -f $DIR_OUT/$GENE.select.vcf.validation ]] || cat $DIR_OUT/$GENE.select.vcf | perl -F"\t" -lane 'if($.==1){print;next}elsif(/(\.\|\.)|(\.\/\.)/){next}else{@ac = map {if($_ eq "0|0" || $_ eq "0/0"){0}elsif($_ eq "0|1" || $_ eq "1|0" || $_ eq "0/1"){1}elsif($_ eq "1|1" || $_ eq "1/1"){2}else{"NA"}} @F[9..$#F];print join "\t",@F;print join "\t",@F[0..8],@ac}' | hmt - 11 > $DIR_OUT/$GENE.select.vcf.validation
+
+## get common snp for the vcf
+[[ -f  $DIR_OUT/$GENE.select.rsid.vcf.ac.x_all ]]  || [[ -f $DIR_OUT/$GENE.select.rsid.vcf ]] || cat $DIR_OUT/$GENE.select.vcf | cut -f 1,2 | $DIR_SCRIPT/comp2line.hash.pl -q - -c 1,2 -d 1,2 -mode ncol -db  $DIR_DATA/hg38.vcf --query_header  -e | paste - $DIR_OUT/$GENE.select.vcf  | grep -v nocomm | perl -F"\t" -lane '$F[9]=$F[4];$F[7]=~s/chr//;print join "\t",@F[7..$#F]' > $DIR_OUT/$GENE.select.rsid.vcf
+
+## calculate allele count
+[[ -f  $DIR_OUT/$GENE.select.rsid.vcf.ac.x_all ]]  || [[ -f $DIR_OUT/$GENE.select.rsid.vcf.ac ]] || cat $DIR_OUT/$GENE.select.rsid.vcf |perl -MList::Util=sum -F"\t" -lane 'if($.==1){print}elsif(/(\.\|\.)|(\.\/\.)/){next}else{@ac = map {if($_ eq "0|0" || $_ eq "0/0"){0}elsif($_ eq "0|1" || $_ eq "1|0" || $_ eq "0/1"){1}elsif($_ eq "1|1" || $_ eq "1/1"){2}else{"NA"}} @F[9..$#F];@ac_notna = grep(!/NA/,@ac);if(sum(@ac_notna)!=0){print join "\t",@F[0..8],@ac}}' > $DIR_OUT/$GENE.select.rsid.vcf.ac
+
+## format vcf to x_matrix format
+[[ -f  $DIR_OUT/$GENE.select.rsid.vcf.ac.x_all ]] || cat $DIR_OUT/$GENE.select.rsid.vcf.ac | perl -F"\t" -lane 'if($.==1){$F[2]="rsid";print join "\t",(@F[0,2,5,1,3,4,7,9..$#F]);next}@info_array=split/;/,$F[7];%info={};map {@tmp = split/=/,$_;$info{$tmp[0]}=$tmp[1]} @info_array;$F[7]=$info{"AF"};print join "\t",(@F[0,2,5,1,3,4,7,9..$#F])' > $DIR_OUT/$GENE.select.rsid.vcf.ac.x_all
+
+
+rm -f $DIR_OUT/$GENE.vcf
+rm -f $DIR_OUT/$GENE.select.vcf
+rm -f $DIR_OUT/$GENE.select.rsid.vcf
+rm -f $DIR_OUT/$GENE.select.rsid.vcf.ac
+
+```
+
+## Early stop checking x matrix
+
+```{r, label = "", linewidth = 85, eval = opt$eval}
+
+all.m <- fread(paste0(opt$dir_out, "/",opt$gene,".select.rsid.vcf.ac.x_all"))
+
+## At least has one line 
+if(nrow(all.m) < 2) 
+{ print("no enough number of splicing events. ")
+    unlink(paste0(opt$dir_out, "/",opt$gene,".select.rsid.vcf.ac.x_all"))
+    knitr::knit_exit()
+}
+```
+
+
+```{bash, label = "runRMD", linewidth = 85, eval=F}
+
+mkdir /scratch/cgg/yany14/MSG/dir_xmatrix_1219/
+
+parallel -j 1 --ungroup -q echo '/home/yany14/Yan_Yan/opt/condaEnv/AccreLibEnv/bin/Rscript /scratch/cgg/yany14/MSG/runRmd.R --rmd /scratch/cgg/yany14/MSG/perGene.process.x.rmd  --gene {} --dir_data /scratch/cgg/yany14/MSG/data/ --dir_out /scratch/cgg/yany14/MSG/dir_xmatrix_1219/ --output {}  --eval TRUE' ::: $(cut -f 1 /scratch/cgg/yany14/MSG/data_dir/Homo_sapiens.GRCh38.101.gtf.tab.pro.eg | sort | uniq) > generate.x.cmd
+
+cat generate.x.cmd | ssub --time_hour 1 -pmem 6000 -nodes 1 -ntasks 1 --cpus_per_task 6 -e -sub
+
+ls /fs0/yany14/MSG/dir_xmatrix_1219/ |  grep html | sed 's/.html//' | grep -v -f - generate.x.cmd | sed 's#Rscript#/home/yany14/Yan_Yan/opt/condaEnv/AccreLibEnv/bin/Rscript#' > generate.x.fail.cmd
+
+## number of html generated
+ls /fs0/yany14/MSG/dir_xmatrix_1219/ | grep "html" |wc -l
+
+## the number is the same to cmd been run.
+wc -l generate.x.cmd
+
+## Number of genes with x matrix : 18893
+ls dir_xmatrix_1219/ | wc -l 
+```
