@@ -1,8 +1,7 @@
-# MSG
+# MTSG
 
-This code is the implemention of MSG methods published as following:
+This code is the implemention of MTSG methods for identifying associations between splicing events and genetics of complex diseases. 
 
-Y. Ji, Q. Wei, R. Chen, Q. Wang, R. Tao, B. Li, Integration of multidimensional splicing data and GWAS summary statistics for risk gene discovery. PLoS Genet. 18, e1009814 (2022).
 
 
 ## step to run it
