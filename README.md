@@ -137,6 +137,10 @@ Rscript scripts/gtex_comp_MSG_ACAT_GBJ_120522.R --x test/xmatrix/ENSG00000000457
 ```
 
 
+## Type I error
+
+The type I error was done using the scripts located in simulation folder. Please check the simulation/runType1Err.sh scripts for details.
+
 
 
 
